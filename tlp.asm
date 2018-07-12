@@ -40,6 +40,7 @@
 ; $1000..$10C9	Display List #1
 ; $10C9..$130F	Display List #2
 ; $1310..$1355  Additional variables
+; $1800..	Screen dump
 ; $2010..$3DFF	8K frame buffer for Display List #1
 ; $4000..$9FFF	24K frame buffer for Display List #2
 ; $A000..$BFFF	8K Cart ROM
@@ -98,7 +99,8 @@ POKMSK		:= $0010			; POKEY interrupt mask.
 RTCLOK		:= $0012			; RTCLOK+0: increments every 65536 VBLANKS (NTSC 18.2 minutes)
 						; RTCLOK+1: increments every 256 VBLANKS   (NTSC 4.27 seconds)
 						; RTCLOK+2: increments every VBLANK	   (NTSC 1/60 second)
-ICAX1Z		:= $002A
+ICDNOZ		:= $0021			; Device Number
+ICAX1Z		:= $002A			; Auxiliary information first byte used in OPEN to specify the type of file access needed.
 ATRACT		:= $004D			; Attract mode timer and flag 
 VPRCED		:= $0202			; Vector to serial peripheral proceed line vector
 VINTER		:= $0204			; Vector to serial peripheral interrupt vector
@@ -190,10 +192,11 @@ WSYNC		:= $D40A			; Wait for horizontal sync.
 
 ; OS ROM (D800-FFFF)
 
-CIOV		:= $E456
+CIOV		:= $E456			;
 SIOV		:= $E459			; Serial Input/Output utility entry point
-SETVBV		:= $E45C
-XITVBV		:= $E462
+SETVBV		:= $E45C			; Set system timers during VBLANK: X->MSB vector/time Y->LSB A->number of vector to change
+						; A = 6->Immediate VBI, 7->Deferred VBI
+XITVBV		:= $E462			; 
 
 
 ;*******************************************************************************
@@ -240,7 +243,7 @@ MARGIN1		:= $00AE			; 2-byte Left margin (full screen)
 PLOT_MODE	:= $00B0			; char mode $00->mode rewrite,$40->inverse video screen mode,$80->mode write,$C0->mode erase
 CURRENT_BAUD	:= $00B1			; Current 850 baud rate: $FF->300 $00->1200
 byte_B2		:= $00B2			; Used during init
-IS_MPP		:= $00B2			; If Microbits 300 then 1 else 0
+IS_MPP		:= $00B2			; $01->MPP, $00->Modem $FF->850? TODO
 DATA_MODE	:= $00B3			; 4->point,5->line,1->block,7->text,0->load mem
 ESC_CODE	:= $00B4			; $00->ESC {R,S,T,V} $01->ESC 2 (Load Coordinate) $02->ESC Q (SSF) $03->ESC Y (Load Echo commnd)  $04->ESC W (Load Memory Address command)  $05->ESC U (select mode 6)
 DATA_FRAME_SZ	:= $00B5			; Number of bytes expected in data frame (1->byte, 3->word, ?->coordinate TODO)
@@ -249,12 +252,9 @@ SERIN_BUF_IDX	:= $00B6			; Index or count of characters received from PLATO
 CURRENT_CHSET	:= $00B7			; $00->M2 $01->M3 $02->M0 $03->M1
 CURRENT_DL	:= $00B8			; Current Display List (80 or FF = DL #1, 00 = DL #2)
 SEND_FLG	:= $00B9			; $00->Nothing to send
-IS_16K		:= $00BA			; TODO Flag for system < 48K RAM? (no support for zoomed display)
+IS_16K		:= $00BA			; Flag for system < 48K RAM (no support for zoomed display)
 CORDX		:= $00BB			; 2-byte explicit X coordinate from PLATO
 CORDY		:= $00BD			; 2-byte explicit Y coordinate from PLATO
-byte_BC		:= $00BC
-byte_BD		:= $00BD
-byte_BE		:= $00BE
 TOUCH_X		:= $00BF			; Current X position of simulated touch screen - resolution is 16 positions ($00-$0F)
 TOUCH_Y		:= $00C0			; Current Y position of simulated touch screen - resolition is 16 positions ($00-$0F)
 UI_MODE		:= $00C1			; Current user interface mode ($00->full-screen, $FF->zoomed, $01->touch screen, $FE->zoomed from touch screen, $02->joystick func keys)
@@ -267,9 +267,8 @@ JSTICK_TR	:= $00C7			; State of joystick trigger ($00=pressed, $FF->clear)
 JSTICK_FN	:= $00C8			; Direction of joystick-mapped function keys: 0D->U(NEXT),02->D(BACK),0C->L(LAB),$12->R(DATA)
 COMPR		:= $00C9			; Compressed graphics mode flag (full screen display)
 CURRENT_SIZE	:= $00CA			; Character Size $00->size 0 (normal) $FF->size 2 (bold/doubled) [temporarily $7F->size 2 in full-screen]
-byte_CB		:= $00CB			; IRQ enable flag: 0->Enable Serial Out IRQs
 SEROUT_IRQ_FLG	:= $00CB			; VSEROR VSEROC IRQ enable flag: 0->Enable Serial Out IRQs
-SERIN_FLG	:= $00CC			; SERIN_FLG
+SERIN_FLG	:= $00CC			; 0->No data received TODO May be a counter
 byte_CD		:= $00CD
 MOD6_BUF	:= $00CE			; Mode 6 buffer
 FG_COLOR_DL2	:= $00D0			; Text luminance used in Display List #2 (zoomed)
@@ -280,18 +279,17 @@ XDLO		:= $00D4			; TODO Delta X when calculating slope?
 XDHI		:= $00D5
 YDLO		:= $00D6			; TODO Delta Y when calculating slope?
 YDHI		:= $00D7
-CURR_WORD	:= $00D8			; Index of current 16 bit word while scaling fonts in load_memory
 VAR		:= $00D8			; working variable
-PIX_CNT		:= $00D9			; Number of pixels set in 8x16 programmable character bitmap
+CURR_WORD	:= VAR				; Index of current 16 bit word while scaling fonts in load_memory
 TMP		:= $00D9			; working variable
+PIX_CNT		:= TMP				; Number of pixels set in 8x16 programmable character bitmap
 MODE_CHANGE	:= $00DA			; Flag set when change to current terminal mode (text, point, line, block, etc) $00->mode changed non-zero->continuation of current mode
 PLATO_WORD	:= $00DB			; 16-bit PLATO word (See s0ascers 3.1.2.4.2)
 off_DD		:= $00DD			; Temp variable
-JSTICK_X	:= $00DD			; VBI: Current joystick direction X-axis (-1=left +1=right)
+JSTICK_X	:= off_DD			; VBI: Current joystick direction X-axis (-1=left +1=right)
 JSTICK_Y	:= $00DE			; VBI: Current joystick direction Y-axis (-1=up   +1=down)
 DL2_TEMP	:= $00DF			; Pointer used while deriving display list #2
 DL2_WIND	:= $00E1			; Pointer into 24K frame buffer for origin (0,0) of zoomed display
-BIT_8x16	:= $00E3			; Pointer to 8x16 character bitmap during load_memory
 YOUT		:= $00E3			; Pointer to a byte in screen RAM. Used to plot new data to screen.
 CNUM		:= $00E5			; 16-bit address to bitmap of character to be drawn on screen
 PLATO_CHAR	:= $00E7			; PLATO/ASCII character code to be sent to PLATO
@@ -310,42 +308,42 @@ X0LO		:= $00F0			; Line endpoint X0
 X0HI		:= $00F1			; 
 Y0LO		:= $00F2			; Line endpoint Y0
 Y0HI		:= $00F3			; 
-
-BLOCK_X1	:= $00F0			; block erase cursor position (TCRSX in Atari code)
-BLOCK_Y1	:= $00F2			; block erase cursor position (TCRSY in Atari code)
-
-BIT_5x6		:= $00F4			; Pointer to 5x6 character bitmap during load_memory
 SUMLO		:= $00F4			; vector draw work variables
 SUMHI		:= $00F5			; 
-
 INDLO		:= $00F6
 INDHI		:= $00F7
-
 INVX		:= $00F8			; X0<X1 or X1<X0
 INVY		:= $00F9			; Y0<Y1 or Y1<Y0
-
-off_FA		:= $00FA
-
-BLOCK_X2	:= $00F8			; block erase cursor position (CURSX in Atari code)
-BLOCK_Y2	:= $00FA			; block erase cursor position (CURSY in Atari code)
-
 DELLO		:= $00FA			; 
 DELHI		:= $00FB
 YM		:= $00FC			; Which axis (X or Y) is the major axis between 2 coords (1->Y-axis, 0->X-axis)
 byte_FF		:= $00FF			; Modem buffer length
-MOD6_ACTION	:= $00FF			; Mode 6 Action code ($FF->Initial state, receive next action)
+MOD6_ACTION	:= byte_FF			; Mode 6 Action code ($FF->Initial state, receive next action)
 
-BUF32		:= $1310			; 32 byte buffer circular buffer
-byte_1330	:= $1330
+BIT_8x16	:= YOUT				; Pointer to 8x16 character bitmap during load_memory
+BIT_5x6		:= SUMLO			; Pointer to 5x6 character bitmap during load_memory
+
+BLOCK_X1	:= X0LO				; block erase cursor position (TCRSX in Atari code)
+BLOCK_Y1	:= Y0LO				; block erase cursor position (TCRSY in Atari code)
+BLOCK_X2	:= INVX				; block erase cursor position (CURSX in Atari code)
+BLOCK_Y2	:= DELLO			; block erase cursor position (CURSY in Atari code)
+off_FA		:= DELLO
+
+BUF32		:= $1310			; 32 byte buffer circular FIFO buffer
+MY_VSERIN	:= $1330			; Device-specific Serial Input Ready Vector
+MY_VSEROR	:= $1332			; Device-specific Serial Output Ready Vector
+MY_VSEROC	:= $1334			; Device-specific Serial Output Complete Vector
+byte_1330	:= MY_VSERIN			
 byte_1336	:= $1336
+byte_1338	:= $1338
 byte_133a	:= $133A
 byte_133c	:= $133C			; Status byte? TODO
 byte_133d	:= $133D			; Status byte? TODO
 byte_133e	:= $133E
 byte_133f	:= $133F
 byte_1340	:= $1340
-byte_1341	:= $1341
-BUF32_IDX	:= $1342			; Offset into circular 32 byte buffer
+BUF32_POP_IDX	:= $1341			; Offset to cart buffer - next location to pull from FIFO
+BUF32_PUSH_IDX	:= $1342			; Offset to cart buffer - next location to add to FIFO
 byte_1343	:= $1343
 byte_1344	:= $1344
 TIMER_EVENT	:= $1345			; System Timer Flag: 0->timer expired (triggered IRQ)
@@ -353,16 +351,10 @@ byte_1346	:= $1346			; Handler Device Type (R:)???
 byte_1347	:= $1347
 byte_1348	:= $1348
 byte_134c	:= $134C
-;off_134d	:= $134D
-
-;byte_134f	:= $134F
-;byte_1350	:= $1350
-;word_1351	:= $1351
 MOD6A		:= $134D			; Mode 6 - Pointer to Mode 6 subroutine. Address received from PLATO host.
 MOD6_D1		:= $134F			; Mode 6 - Flag
 MOD6_1ST	:= $1350			; Mode 6 - Flag for 1st pass ($FF = 1st pass)
 MOD6_N		:= $1351			; Mode 6 - Number of bytes expected for download into MOD6_BUF
-
 CURRENT_ECHO	:= $1353			; $00->local echo $80->remote echo
 DATA_FRAME_SZ2	:= $1354			; Previous data frame size - used to restore previous state
 CURRENT_SELECT	:= $1355			; Which color aspect is modified with SELECT ($00->c, $80->b, $C0->t)
@@ -505,7 +497,7 @@ kernel:						; A05E
 	jsr     send_mod6_data			; Send data to PLATO if any
 
 	lda     SERIN_FLG			; Any data received?
-	beq     kernel   			; No? -->
+	beq     kernel   			; 0->No -->
 
 	jsr     proc_serial_in			; Process incoming data
 	bcc     kernel   			; Any more work? No? -->
@@ -811,8 +803,8 @@ restore_mode:					; A120
 	lda     DATA_FRAME_SZ2 			; Restore previous data frame size
 	sta     DATA_FRAME_SZ 			; 
 
-	lda     DATA_MODE 			; Clear bit 6 in DATA_MODE index/flag
-	and     #%10111111    			; 
+	lda     DATA_MODE 			; 
+	and     #%10111111    			; Clear bit 6 in DATA_MODE index/flag
 :	sta     DATA_MODE 			; 
 :	rts             			; 
 
@@ -825,7 +817,8 @@ restore_mode:					; A120
 ;*******************************************************************************
 
 ; DESCRIPTION
-; These's no evidence this is ever called.
+; This subroutine is called if a mode 6 transaction requires data to be uploaded
+; to the PLATO host.
 send_mod6_data:					; A12C
 	lda     SEND_FLG     			; Anything to send?
 	beq     :-				; No? Return to kernel
@@ -1292,16 +1285,20 @@ init_graphics:					; A214
 	lda     #<ch_mem_m0_DL1
 	sta     CHSET_BASE			; Save LSB of ch_mem_m0_DL1 to RAM
 
-;** (n) Disable break key interrupt *********************************************
+;-------------------------------------------------------------------------------
+; Disable break key interrupt
+;-------------------------------------------------------------------------------
 	lda     POKMSK				; 1100 000 is the default on power up
-	and     #$7F    			; Clear flag for break key interrupt
+	and     #%01111111    			; Clear flag for break key interrupt
 	jsr     sub_irqen			; Enable new set of interrupts
 
-;** (n) Set system timer for vector #7  ******************************************
-	ldy     #<vbi_handler     		; LSB of new vector routine
-	ldx     #>vbi_handler     		; MSB of new vector routine
-	lda     #$07    			; Number of the vector to change
-	jmp     SETVBV  			; Set system timers (SETVBV will rts)
+;-------------------------------------------------------------------------------
+; Register Deferred VBI handler
+;-------------------------------------------------------------------------------
+	ldy     #<vbi_handler     		; LSB of vector
+	ldx     #>vbi_handler     		; MSB of vector
+	lda     #$07    			; Number of the vector to change (7->Deferred VBI)
+	jmp     SETVBV  			; Register with OS and RTS
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -2322,7 +2319,7 @@ LA565:  lda     LEND     			; create special mask
 ; Check if running on ROM cartridge
 :	lda     #<(obf_code-1)			; Point to obfuscated code used...
 	ldy     #>(obf_code-1)			; ...for copy-protection check.
-	ldx     #$0C				; Init counter for 12 bytes of obfuscated code
+	ldx     #12				; Init counter for 12 bytes of obfuscated code
 	jsr     check_if_pirated		; 
 	rts             			; 
 
@@ -2833,7 +2830,7 @@ clear_screen:					; A6A2
 
 ;** (n) Load self modifying code #1 into zero page RAM *************************
 	ldx     #$1B    			; Copy 28 bytes of code
-:	lda     LA6D0,X 			; ...from ROM address $A6D0
+:	lda     generate_DL2,X 			; ...from ROM address $A6D0
 	sta     A:INIT_DL,X       		; ...to zero page $80
 	dex             			;
 	bpl     :-				; Next X
@@ -2864,18 +2861,19 @@ clear_screen:					; A6A2
 ; Self-modifying code #1 to be copied from ROM to RAM
 ; This code creates a list of screen addresses used for display list #2
 ; ----------------------------------------------------------------------------
-LA6D0:  sta     L2000,Y 			; A6D0 99 00 20 
+generate_DL2:					; A6D0
+	sta     L2000,Y 			; Store DL instructions at $2000+Y
 	bvs     :+				; Is 16K system? Yes? Skip -->
 	sta     SCREEN_DL2,Y			; 
 	sta     SCREEN_DL2+$2000,Y 		;
 	sta     SCREEN_DL2+$4000,Y 		;
 :	iny             			; 
-	bne     LA6D0   			; Offset is back to $80 at runtime
+	bne     generate_DL2   			; Offset is back to $80 at runtime
 	inc     $82     			; Self modifying code. Increment pointers.
 	inc     $87     			;
 	inc     $8D     			; 
 	inc     $8A     			;
-	bpl	LA6D0				; Offset is back to $80 at runtime
+	bpl	generate_DL2			; Offset is back to $80 at runtime
 	rts
 
 ; ----------------------------------------------------------------------------
@@ -4346,9 +4344,18 @@ send_A:	jmp     send_to_plato			; --> Send to PLATO and RTS
 ;*******************************************************************************
 
 ; DESCRIPTION
-; This subroutine sends the simulated touch panel coordinates to the PLATO host.
+; If the UI_MODE is in full screen display in touch mode, this subroutine sends 
+; the simulated touch panel coordinates to the PLATO host.
 ; Three bytes are sent: ESC c1 c2. The X and Y coordinates are packed across the 
 ; 2 data bytes (c1, c2) as described below.
+;
+; If the UI_MODE is in zoomed display, pressing the joystick trigger switches
+; back to the full screen in touch mode and does not send anything to the PLATO
+; host.
+; 
+; Parameters:
+; X = UI_MODE
+; Y = JSTICK_TR
 ;-------------------------------------------------------------------------------
 ; (excerpt from s0ascers 3.2.3.3)
 ;-------------------------------------------------------------------------------
@@ -4408,22 +4415,29 @@ send_A:	jmp     send_to_plato			; --> Send to PLATO and RTS
 ; right hand corner is at (15,15). Alternate input devices that have greater 
 ; precision must be scaled down to fit into the 0 to 15 range.
 ;
-;   The touch panel should be active only when enabled by an
-;   SSF command (see section 3.2.3.1.6.2).
+; The touch panel should be active only when enabled by an SSF command 
+; (see section 3.2.3.1.6.2).
 ;-------------------------------------------------------------------------------
 
 send_touch:					; AB05
 	dey             			; clear trigger state to -1
 	sty     JSTICK_TR 			; 
 
-	txa             			; TODO What's in X? AB08 8A                       .
-	dex             			; AB09 CA                       .
-	bmi     swap_display			; AB0A 30 A1                    0.
-	bne     LAB53   			; --> RTS
-	jsr     play_beep
+;-------------------------------------------------------------------------------
+; X = UI_MODE $FE->zoomed with touch screen, $01->touch screen 
+; If in zoomed display, switch to full screen mode and leave without sending.
+;-------------------------------------------------------------------------------
+	txa             			; 
+	dex             			; 
+	bmi     swap_display			; If zoomed, switch to full screen
+	bne     LAB53   			; ... and RTS
 
+;-------------------------------------------------------------------------------
+; If in full screen display, beep and send coordinates 
+;-------------------------------------------------------------------------------
+	jsr     play_beep			; 
 	lda     #$1B    			; Send ESC
-	jsr     send_to_plato2
+	jsr     send_to_plato2			;
 
 	lda     #$00    			; Clear PLATO_CHAR
 	sta     PLATO_CHAR     			; 
@@ -4488,16 +4502,22 @@ send_touch:					; AB05
 
 proc_joystick:					; AB35
 
-;** Skip to joystick trigger if not in joystick-mapped function key mode *******
+;-------------------------------------------------------------------------------
+; Skip to joystick trigger if not in joystick-mapped function key mode
+;-------------------------------------------------------------------------------
 	ldx     UI_MODE     			; 
 	cpx     #$02    			; Using joystick-mapped mode?
 	bne     @TRIG				; no, skip to trigger check.
 
-;** Examine joystick-mapped key code *******************************************
+;-------------------------------------------------------------------------------
+; Examine joystick-mapped key code
+;-------------------------------------------------------------------------------
 	lda     JSTICK_FN			; Let A = char to send to PLATO
 	beq     @TRIG				; Skip if nothing (0) to send.
 
-;** Clear variables to avoid re-sending ****************************************
+;-------------------------------------------------------------------------------
+; Clear variables to avoid re-sending
+;-------------------------------------------------------------------------------
 	ldx     #$00    			; 
 	stx     JSTICK_FN    			; Clear joystick key press
 	stx     ATRACT  			; Clear attract mode
@@ -4505,15 +4525,21 @@ proc_joystick:					; AB35
 	dex             			; 
 	stx     JSTICK_TR 			; Clear trigger state (-1)
 
-;** Play Beep ***********************************************************************
+;-------------------------------------------------------------------------------
+; Play Beep
+;-------------------------------------------------------------------------------
 	pha             			; Stash A 
 	jsr     play_beep			; beep
 	pla             			; Restore A
 
-;** Send to PLATO **************************************************************
-	bne     send_A   				; Send A to PLATO and RTS
+;-------------------------------------------------------------------------------
+; Send to PLATO
+;-------------------------------------------------------------------------------
+	bne     send_A   			; Send A to PLATO and RTS
 
-;** Process joystick trigger ***************************************************
+;-------------------------------------------------------------------------------
+; Process joystick trigger
+;-------------------------------------------------------------------------------
 @TRIG:	ldy     JSTICK_TR 			; is trigger pressed? (0=yes)
 	beq     send_touch   			; yes, send touch X,Y to PLATO
 LAB53:  rts             			; 
@@ -4525,9 +4551,15 @@ LAB53:  rts             			;
 ;*            Send character to PLATO, reset system timer, and RTS             *
 ;*                                                                             *
 ;*******************************************************************************
+
+; DESCRIPTION
+; This subroutine sends a character to PLATO.
+;
+; Parameters:
+; A = character/byte to be sent
 send_to_plato2:					; AB54
-	jsr     send_to_plato
-	jmp     set_sys_tm1
+	jsr     send_to_plato			; Apply parity and send
+	jmp     wait_3_jiffies			; Wait 3 jiffies and RTS
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -4616,7 +4648,7 @@ print_char:					; AB5D
 	jsr     div_cx2_by_8			; Offset saved to SUMLO
 
 	lda     CURSOR2_X
-	and     #$04    			; TODO Use modulus for indexing
+	and     #$04    			; TODO 
 	beq     :+				; Coarse coord, skip -->
 	inc     SUMLO				; Fine coord, increment by modulus
 
@@ -5881,48 +5913,66 @@ vbi_handler:					; B013
 	sbc     #$02    			; using joystick-mapped function keys?
 	bne     :+				; no, skip ahead.
 
-;** In joystick-mapped mode. Skip polling if a delay is active *****************
+;-------------------------------------------------------------------------------
+; In joystick-mapped mode. Skip polling if a delay is active
+;-------------------------------------------------------------------------------
 	ldx     JSTICK_TR_DLY   		; is delay active?
 	bne     :++				; yes, skip polling
 
-;** Poll joystick trigger ******************************************************
+;-------------------------------------------------------------------------------
+; Poll joystick trigger
+;-------------------------------------------------------------------------------
 :	lda     STRIG0				; is joystick trigger pressed?
 	bne     :++				; no, skip ahead.
 
-;** Trigger pressed and a delay is active, skip joystick direction logic *******
+;-------------------------------------------------------------------------------
+; Trigger pressed and a delay is active, skip joystick direction logic
+;-------------------------------------------------------------------------------
 	ldx     JSTICK_TR_DLY   		; 
 	bne     LB045   			; 
 
-;** Trigger pressed and a delay is not active. Initialize a new delay. *********
+;-------------------------------------------------------------------------------
+; Trigger pressed and a delay is not active. Initialize a new delay.
+;-------------------------------------------------------------------------------
 	ldx     #$1E    			; $1E = 30 (that's 0.5 seconds to run down in 60Hz VBI time)
 	stx     JSTICK_TR_DLY   			; Start new delay
 :	sta     JSTICK_TR 			; $00->{pressed,joystick mapped mode} $FF->not pressed
 
-;** Poll joystick direction ****************************************************
+;-------------------------------------------------------------------------------
+; Poll joystick direction
+;-------------------------------------------------------------------------------
 :	ldx     STICK0				; Read joystick 0
 	lda     tab_stick_x,x 			; Get X-axis unit vector
 	sta     JSTICK_X                        ; Save X vector
 	lda     tab_stick_y,x 			; Get Y-axis unit vector
 	sta     JSTICK_Y			; Save Y vector
 
-;** If joystick is pointing in any direction then call vbi_joystick ************
+;-------------------------------------------------------------------------------
+; If joystick is pointing in any direction then call vbi_joystick ************
+;-------------------------------------------------------------------------------
 	ora     JSTICK_X			; Any direction?
 	bne     :+				; yes, jump to jsr call.
 	sta     JSTICK_DIR    			; no, let JSTICK_DIR = 0
 	beq     LB045   			; and skip over jsr call.
 :	jsr     vbi_joystick   			; call to stick direction routine.
 
-;** Decrement delay counter if a delay is active *******************************
+;-------------------------------------------------------------------------------
+; Decrement delay counter if a delay is active
+;-------------------------------------------------------------------------------
 LB045:  ldx     JSTICK_TR_DLY     		; Don't decrement delay counter
 	beq     :+				; if we've reached 0.
 	dec     JSTICK_TR_DLY  			; otherwise 
 
-;** Check for SELECT press every 16 VBLANKS (0.27 secs) ************************
+;-------------------------------------------------------------------------------
+; Check for SELECT press every 16 VBLANKS (0.27 secs)
+;-------------------------------------------------------------------------------
 :	lda     RTCLOK+2     			; Get current jiffy
 	and     #$0F    			; Skip unless lower nybble...
 	bne     LB087   			; ...of clock is 0
 
-;** Was SELECT pressed? Exit if no *********************************************
+;-------------------------------------------------------------------------------
+; Was SELECT pressed? Exit if no
+;-------------------------------------------------------------------------------
 	lda     CONSOL  			; test if SELECT is pressed
 	and     #$03    			; mask irrelevant bits
 	cmp     #$01    			; 
@@ -5936,7 +5986,9 @@ LB045:  ldx     JSTICK_TR_DLY     		; Don't decrement delay counter
 	bmi     LB09A   			; jump if SELECT changes background luminance
 						; otherwise fall into background color
 
-;** Change background hue *****************************************************
+;-------------------------------------------------------------------------------
+; Change background hue
+;-------------------------------------------------------------------------------
 	php             			; stash processor flags
 	tya             			; get current background hue + luminance
 	clc             			; 
@@ -5956,7 +6008,9 @@ LB076:  sta     COLOR2  			; save new hue + luminance to...
 :	sta     BG_COLOR_DL2    		; current display mode is zoomed, save color
 LB087:  jmp     XITVBV				; Call OS VBI Deferred Exit and RTI
 
-;** Change forground luminance *************************************************
+;-------------------------------------------------------------------------------
+; Change forground luminance
+;-------------------------------------------------------------------------------
 LB08A:  inc     COLOR1  			; increment foreground luminance
 	lda     COLOR1  			; 
 	bcc	:+				; Update full-screen display 
@@ -5965,7 +6019,9 @@ LB08A:  inc     COLOR1  			; increment foreground luminance
 :	sta     FG_COLOR_DL2    		; variable and...
 	bcc     LB087   			; jump to XITBV.
 
-;** Change background luminance ************************************************
+;-------------------------------------------------------------------------------
+; Change background luminance
+;-------------------------------------------------------------------------------
 LB09A:  tya             			; let a = current COLOR2
 	and     #$F0    			; Reserve current hue only...
 	sta     off_DD				; ...and save to temp variable.
@@ -6389,24 +6445,23 @@ display_comm_error:
 ; Populates the IOCB table with device and operation details and calls CIO.
 ; Similar to a BASIC statement like [XIO cmd, #Channel, Aux1, Aux2, "Rn:"]
 ;
-sub_b206:
-call_cio:
+call_cio:						; B206
 	pha
-	ldx     tab_iocb,y				; CIO channel number * 16
-	lda     tab_iocb+1,y
-	sta     ICCOM,x					; CIO command
-	lda     tab_iocb+2,y
-	sta     ICAX1,x					; CIO aux 1
-	lda     tab_iocb+3,y
-	sta     ICAX2,x					; CIO aux 2
-	lda     tab_iocb+4,y
-	sta     ICBA,x					; CIO buffer base address (lo)
-	lda     tab_iocb+5,y
-	sta     ICBA+1,x				; CIO buffer base address (hi)
-	lda     tab_iocb+6,y
-	sta     ICBL,x					; CIO buffer size (lo)
-	lda     tab_iocb+7,y
-	sta     ICBL+1,x				; CIO buffer size (hi)
+	ldx     tab_iocb,Y				; CIO channel number * 16
+	lda     tab_iocb+1,Y
+	sta     ICCOM,X					; CIO command
+	lda     tab_iocb+2,Y
+	sta     ICAX1,X					; CIO aux 1
+	lda     tab_iocb+3,Y
+	sta     ICAX2,X					; CIO aux 2
+	lda     tab_iocb+4,Y
+	sta     ICBA,X					; CIO buffer base address (lo)
+	lda     tab_iocb+5,Y
+	sta     ICBA+1,X				; CIO buffer base address (hi)
+	lda     tab_iocb+6,Y
+	sta     ICBL,X					; CIO buffer size (lo)
+	lda     tab_iocb+7,Y
+	sta     ICBL+1,X				; CIO buffer size (hi)
 	pla
 	jmp     CIOV					; CIOV executes an RTS
 
@@ -6418,21 +6473,26 @@ call_cio:
 ;*                        Close CIO device on channel #1                       *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b238:
-close_ch1:
+
+; DESCRIPTION
+;
+close_ch1:					; B238
 	ldx     #$10    			; Set CIO channel #1
-						; Fall through to sub_b23a
+						; Fall through to close_ch_x
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                  sub_b23a                                   *
+;*                                  close_ch_x                                 *
 ;*                                                                             *
 ;*                        Close CIO device on channel #x                       *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b23a:
+
+; DESCRIPTION
+;
+close_ch_x:					; B23A
 	lda     #$0C    			
-	sta     ICCOM,x				; CIO close channel command
+	sta     ICCOM,X				; CIO close channel command
 	jmp     CIOV				; CIO will RTS
 
 ;*******************************************************************************
@@ -6520,15 +6580,18 @@ config_mpp:					; b272
 
 ; DESCRIPTION
 screen_dump:					; B28A
-	ldx     IS_MPP				; which comm device: 1->MPP 0->Modem
+	ldx     IS_MPP				; which comm device: 1->MPP 0->Modem $FF->850?TODO
 	dex             			; 
 	beq     :+				; is modem a Microbits 300?
 	jsr     close_ch1			; no, close channel #1.
 :	ldy     #open_p-tab_iocb		; Open "P:" on channel #3
 	jsr     call_cio			; 
-	bmi     LB2C0   			; if cio error, goto LB2C0
+	bmi     LB2C0   			; if cio error, play beep
 
-	lda     #$20    			; Initialize outer loop = 32
+;-------------------------------------------------------------------------------
+;
+;-------------------------------------------------------------------------------
+	lda     #32   				; For TMP = 32 to 1 Step -1 (row)
 	sta     TMP	 			; 
 
 	lda     #<$1800    			; Initialize zero-page pointers
@@ -6536,60 +6599,80 @@ screen_dump:					; B28A
 	lda     #>$1800    			;
 	sta     off_FA+1			;
 
-;**(n) TODO Do something 32 times **********************************************
-:	jsr     sub_b2c6   			; B2A5 20 C6 B2                 ..
-	dec     TMP	 			; B2A8 C6 D9                    ..
+;-------------------------------------------------------------------------------
+; Loop over 32 rows of text
+;-------------------------------------------------------------------------------
+:	jsr     dump_over_cols  		; B2A5 20 C6 B2                 ..
+	dec     TMP	 			; Next TMP
 	bne     :-
 
+;-------------------------------------------------------------------------------
+; Close printer on channel #3
+;-------------------------------------------------------------------------------
 LB2AC:  ldx     #$30    			; Set CIO Channel #3 (Printer)
-	jsr     sub_b23a			; Call CIO close channel
-	ldx     IS_MPP
-	dex             			; B2B3 CA                       .
-	beq     LB2F9   			; Jump to nearby RTS
-	bpl     :+
-	jmp     LB71C   			; B2B8 4C 1C B7                 L..
+	jsr     close_ch_x			; Call CIO close channel
 
-; ----------------------------------------------------------------------------
+	ldx     IS_MPP				; which comm device: 1->MPP 0->Modem $FF->850? TODO
+	dex             			; 
+	beq     LB2F9   			; MPP? --> RTS
+	bpl     :+				; Modem? -->
+	jmp     LB71C   			; else 850 -->
+
+;-------------------------------------------------------------------------------
+; Modem
+;-------------------------------------------------------------------------------
 :	ldy     #open_t-tab_iocb		; Atari Modem
 	jmp     call_cio_or_err			; Open "T:" for read/write
 
-; ----------------------------------------------------------------------------
 LB2C0:  jsr     play_beep
 	jmp     LB2AC   			; B2C3 4C AC B2                 L..
 
-; ----------------------------------------------------------------------------
-sub_b2c6:
-	ldy     #63				; Iterate across columns
-	lda     #$20   				; Iterate across rows
-@LOOP:	cmp     (off_FA),y			; Is it a SPACE?
+;*******************************************************************************
+;*                                                                             *
+;*                               dump_over_cols                                *
+;*                                                                             *
+;*                         Loop over 64 columns of text                        *
+;*                                                                             *
+;*******************************************************************************
+
+; DESCRIPTION:
+;
+dump_over_cols:					; B2C6
+	ldy     #63				; For Y = 63 to 0 Step -1 (columns)
+	lda     #32   				; 
+@LOOP:	cmp     (off_FA),Y			; Is it a SPACE?
 	bne     :+				; No? -->
 	dey             			; Yes, SPACE
-	bpl     @LOOP				; Do next unless at 64-->
+	bpl     @LOOP				; Next Y
 
 :	lda     #$9B    			; ATASCII EOL character
-	iny             			; B2D3 C8                       .
+	iny             			; 
 	beq     :+				;
-	iny             			; B2D6 C8                       .
-:	sty     ICBL+$30
 
-	ldx     #$30    			; B2DA A2 30                    .0
-        ldy     #$09    			; B2DC A0 09                    ..
-	sty     ICCOM+$30
+	iny             			;
+:	sty     ICBL+$30			; Buffer length
 
-	ldy     off_FA
-	sty     ICBA+$30
+	ldx     #$30    			; 
+        ldy     #$09    			; 9->Write Append
+	sty     ICCOM+$30			;
 
-	ldy     off_FA+1
-	sty     ICBA+1+$30
+	ldy     off_FA				;
+	sty     ICBA+$30			; Data transfer buffer LSB
 
-	jsr     CIOV
+	ldy     off_FA+1			;
+	sty     ICBA+1+$30			; Data transfer buffer MSB
 
-	lda     #$40    			; B2EE A9 40                    .@
-	clc             			; B2F0 18                       .
-	adc     off_FA
-	sta     off_FA
-	bcc     LB2F9
-	inc     off_FA+1
+	jsr     CIOV				;
+
+;-------------------------------------------------------------------------------
+; Increment pointer by 64
+;-------------------------------------------------------------------------------
+	lda     #64    				; 
+	clc             			; 
+	adc     off_FA				;
+	sta     off_FA				;
+	bcc     LB2F9				;
+	inc     off_FA+1			;
 LB2F9:	rts             			; B2F9 60                       `
 
 ;*******************************************************************************
@@ -6614,7 +6697,7 @@ t_handler_put:					; B2FA
 	beq     LB353   			; B308 F0 49                    .I
 
 	lda     #$80    			; B30A A9 80                    ..
-	sta     byte_1346
+	sta     byte_1346			; Let = $80
 
 	ldy     #$01    			; Return code 1
 	rts             			; 
@@ -6649,8 +6732,8 @@ t_handler_put:					; B2FA
 ;-------------------------------------------------------------------------------
 ; Here if byte_1343 <> $46
 ;-------------------------------------------------------------------------------
-	ldx     #$02    			; B329 A2 02                    ..
-	jsr     sub_b422			;
+	ldx     #$02    			; 2->Wait 3 secs after serout is ready again
+	jsr     wait_for_serout			;
 
 	ori	byte_133c, $01			; Set bit 0 in status byte
 	ldy     #$01    			; Return code 1
@@ -6685,7 +6768,7 @@ LB353:  lda     OUTBFPT				;
 ; 
 ;-------------------------------------------------------------------------------
 	sei             			; Inhibit IRQ
-	jsr     put_outbuf			; 
+	jsr     push_outbuf			; 
 	lda     SEROUT_IRQ_FLG     		; 1->Skip enable serial out IRQs
 	bne     :+				; 
 	jsr     enable_serout_irqs		; Enable serial out IRQs
@@ -6696,19 +6779,21 @@ LB353:  lda     OUTBFPT				;
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                               put_outbuf                                *
+;*                               push_outbuf                                *
 ;*                                                                             *
 ;*                  Store character into an output buffer                      *
 ;*                                                                             *
 ;*******************************************************************************
 
 ; DESCRIPTION
-put_outbuf:					; B369
-	ldy     BUF32_IDX   			; 
+; 
+push_outbuf:					; B369
+	ldy     BUF32_PUSH_IDX   		; 
 	lda     CHARACTER                       ; load character
 	sta     BUF32,Y 			; store character into circular buffer
+
 	jsr     adv_buff_32_idx                 ; let buffer offset = (buffer offset + 1) && $1F
-	sta     BUF32_IDX   			; 
+	sta     BUF32_PUSH_IDX   			; 
 	inc     OUTBFPT				; increment output buffer pointer
 	rts             			; 
 
@@ -6719,7 +6804,9 @@ put_outbuf:					; B369
 ;*                                   TODO                                      *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b37c:
+
+; DESCRITION
+; TODO
 t_handler_get:					; B37C
 	tsx             			; 
 	stx     byte_1344			;
@@ -6738,30 +6825,28 @@ t_handler_get:					; B37C
 ;*******************************************************************************
 
 ; DESCRIPTION
-;
 ; Get character from input buffer. Save in CHARACTER.
-sub_b38a:  
-get_inpbuf:
+get_inpbuf:					; B38A
 	lda     INPBUF,Y 			; Get byte from buffer
 	and     #$7F    			; Strip off the PLATO parity bit.
 	sta     CHARACTER                       ; Store character
 	iny             			; 
 	sty     BUFLEN  			; Increment BUFLEN
-	dec     SERIN_FLG                       ;
+	dec     SERIN_FLG                       ; 
 	cli             			; Enable interrupts
 	ldy     #$01    			; Return success
 	rts             			;
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                               get_rs232_status                              *
+;*                                 sub_vserin                                  *
 ;*                                                                             *
-;*                            RS232 Get Status???                              *
+;*                        ?????????????????????????                            *
 ;*                                                                             *
 ;*******************************************************************************
 
-sub_b39c:
-get_rs232_status:				; B39C
+; DESCRIPTION
+; TODO
 sub_vserin:					; B39C
 	cld             			; Assert binary mode
 	tya             			; Stash Y into stack
@@ -6773,8 +6858,8 @@ sub_vserin:					; B39C
 	sta     SKREST  			; Reset serial port status
 	eor     #%11111111    			; Invert bits
 	and     #%11000000    			; AND 1100 0000
-	ora     byte_133d			;
-	sta     byte_133d			;
+	ora     byte_133d			; TODO
+	sta     byte_133d			; TODO
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -6784,7 +6869,8 @@ sub_vserin:					; B39C
 ;*                                                                             *
 ;*******************************************************************************
 
-LB3B5:  
+; DESCRIPTION
+; TODO
 pull_and_rti:					; B3B5
 	pla             			;
 	tay             			;
@@ -6798,14 +6884,17 @@ pull_and_rti:					; B3B5
 ;*               Append serial or MPP input to input buffer                    *
 ;*                                                                             *
 ;*******************************************************************************
-; MPP Microbit 300 routine to write to Input Buffer?
-sub_b3b9:
-put_inpbuf:
+
+; DESCRIPTION
+; MPP Microbit 300 routine to write to Input Buffer? 
+; TODO Doesn't make sense to write to input buffer
+; Maybe move character from serial device to input buffer
+put_inpbuf:					; B3B9
 	ldy     INPBFPT				; Offset in input buffer
 	sta     INPBUF,Y 			; 
 	iny             			; 
 	sty     INPBFPT				; Move pointer
-	inc     SERIN_FLG			;
+	inc     SERIN_FLG			; Signal data received
 	rts             			; 
 
 ;*******************************************************************************
@@ -6815,17 +6904,19 @@ put_inpbuf:
 ;*             ?????????????????????????????????????????????????               *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b3c6:
-sub_vseror:
-sub_vseroc:					; B3C6
+
+; DESCRIPTION
+; TODO
+sub_vserout:
 	cld             			; Assert binary mode
 	tya             			; 
 	pha             			;
-	lda     OUTBFPT				;
-	bne     :+				;
+
+	lda     OUTBFPT				; Is output buffer empty?
+	bne     :+				; No? Skip -->
 
 ;-------------------------------------------------------------------------------
-; Nothing to do, return
+; Output buffer is empty
 ;-------------------------------------------------------------------------------
 	lda     #$E7    			; Set interrupt flags
 	and     POKMSK				;
@@ -6833,33 +6924,37 @@ sub_vseroc:					; B3C6
 	jmp     pull_and_rti   			; Return
 
 ;-------------------------------------------------------------------------------
-; Something to do.
+; Output buffer is not empty
 ;-------------------------------------------------------------------------------
-:	jsr     sub_b3e7
-	sta     SEROUT
+:	jsr     pop_outbuf			; Pull char from cart's output buffer
+	sta     SEROUT				; ..and put it in hardware output char
 
 :	lda     IRQST				; Wait for VSEROC to be re-enabled
-	and     #$08    			;
+	and     #%00001000    			;
 	beq     :-				;
 
 	bne     pull_and_rti   			; Restore Y and return from interrupt
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 ?????????                                   *
+;*                                pop_outbuf                                   *
 ;*                                                                             *
 ;*             ?????????????????????????????????????????????????               *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b3e7:  
-	ldy     byte_1341   			; B3E7 AC 41 13                 .A.
-	lda     BUF32,Y 			; B3EA B9 10 13                 ...
-	pha             			; B3ED 48                       H
+
+; DESCRIPTION
+; Return with A containing next char waiting to be sent via serial
+pop_outbuf:					; B3E7
+	ldy     BUF32_POP_IDX   		; Index to next char to be sent via serial
+	lda     BUF32,Y 			; Get character from buffer
+	pha             			; Stash character
 	jsr     adv_buff_32_idx
-	sta     byte_1341   			; B3F1 8D 41 13                 .A.
-	dec     OUTBFPT
-	pla             			; B3F7 68                       h
-	rts             			; B3F8 60                       `
+
+	sta     BUF32_POP_IDX   			; Save new buffer index
+	dec     OUTBFPT				; TODO 
+	pla             			; Return with character in A
+	rts             			; 
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -6868,6 +6963,9 @@ sub_b3e7:
 ;*             ?????????????????????????????????????????????????               *
 ;*                                                                             *
 ;*******************************************************************************
+
+; DESCRIPTION
+; Subroutine when Serial Peripheral Proceed Line interrupt occurs
 sub_vprced:					; B3F9
 	cld             			; Assert binary mode
 	tya             			; Stash Y onto stack
@@ -6918,51 +7016,71 @@ sub_vinter:					; B406
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 ?????????                                   *
+;*                             wait_for_serout_8                               *
 ;*                                                                             *
 ;*             ?????????????????????????????????????????????????               *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b420:
-	ldx     #$00    			; B420 A2 00                    ..
+
+; DESCRIPTION
+; Set timer IRQ to wait for 8 jiffies
+wait_for_serout_8:				; B420
+	ldx     #$00    			; 0->Wait for 8 jiffies (later)
+						; Fall through to wait on serout
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 ?????????                                   *
+;*                              wait_for_serout                                *
 ;*                                                                             *
 ;*             ?????????????????????????????????????????????????               *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b422:
-	lda     SEROUT_IRQ_FLG     		; 
-	bne     sub_b422			; Wait for Serial Out IRQs to be enabled
 
-	jsr     wait_outbuf_to_empty			;
+; DESCRIPTION
+; Parameters:
+; X = 0->Set timer A to 8 jiffies
+; X = 1->Set timer A to 1 second
+; X = 2->Set timer A to 3 seconds
+wait_for_serout:				; B422
+	lda     SEROUT_IRQ_FLG     		; 0->Enable Serial Out IRQs
+	bne     wait_for_serout			; Wait for Serial Out IRQs to be enabled
 
-:	lda     IRQST
-	and     #$08    			; Wait for VSEROC (output complete) to be enabled
-	bne     :-
+	jsr     wait_outbuf_to_empty		;
 
-	lda     #$35    			; Clear bit 3 enabled by OS IRQ code (normally $3C)
+:	lda     IRQST				;
+	and     #%00001000    			; Wait for VSEROC (output complete) to be disabled
+	bne     :-				;
+
+	lda     #%00110101    			; $35 Clear bit 3 enabled by OS IRQ code (normally $3C)
 	sta     PBCTL				; Bit 3 - Peripheral command identification (serial bus command)
-	sta     SEROUT_IRQ_FLG     			; Let $CB = $35
+	sta     SEROUT_IRQ_FLG     		; Disable Serial Out IRQs
 
 	sei             			; Inhibit IRQs
-	jsr     put_outbuf			; Store character in output buffer
+	jsr     push_outbuf			; Store character in output buffer
 	cli             			; Enable IRQs
-	jsr     wait_outbuf_to_empty
+
+	jsr     wait_outbuf_to_empty		; Returns with A = 0
+						; Fall through to TODO
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 ?????????                                   *
+;*                               wait_for_timer                                *
 ;*                                                                             *
-;*             ?????????????????????????????????????????????????               *
+;*             TODO Probably not accurate name for subroutine.                 *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b43f:
-	ldy     LB47A,X 			; B43F BC 7A B4                 .z.
-	ldx     #$00    			; B442 A2 00                    ..
-	jsr     sub_b51f
+
+; DESCRIPTION
+; Parameters:
+; X = 0->Set timer A to 8 jiffies
+; X = 1->Set timer A to 1 second
+; X = 2->Set timer A to 3 seconds
+; where A contains which system timer to configure
+
+wait_for_timer:					; B43F
+	ldy     tab_timer_vals,X 		; Y->Timer low byte
+	ldx     #$00    			; X->Timer high byte
+	jsr     set_timer			; Register timer parameters
 
 ;-------------------------------------------------------------------------------
 ; Wait for TIMER_EVENT or Skip ahead if Serial Output IRQs are enabled
@@ -6979,7 +7097,7 @@ sub_b43f:
 	sta     byte_1346			; Let byte_1346 = 0
 	sta     SEROUT_IRQ_FLG     		; 0->Enable Serial Output IRQs
 
-	lda     #%00111101    			; Enable Port B IRQ
+	lda     #%00111101    			; $3D Enable Port B IRQ
 	sta     PBCTL				; Port B Control
 
 ;-------------------------------------------------------------------------------
@@ -6987,66 +7105,64 @@ sub_b43f:
 ;-------------------------------------------------------------------------------
 	lda     byte_133a			; TODO
 	and     #%00010000    			; 
-	beq     :+				; Status bit clear? Yes? -->
+	beq     :+				; Is Status bit 4 clear? Yes? -->
 
 	sec             			; Set Carry (return code)
 	bcs     :+++				; -->
 
 ; Here if byte_133a bit 4 is clear
-:	ldx     byte_1344
+:	ldx     byte_1344			;
 	txs             			; B467 9A                       .
-	ldy     #$8B    			; B468 A0 8B                    ..
+	ldy     #%10001011			; $8B  or 139  B468 A0 8B                    ..
 	rts             			; Return Y
 
 ;-------------------------------------------------------------------------------
 ; Serial Output IRQs were enabled, enable Port B IRQ
 ;-------------------------------------------------------------------------------
-:	lda     #%00111101    			; Enable Port B IRQ
+:	lda     #%00111101    			; $3D Enable Port B IRQ
 	sta     PBCTL				; Port B Control
 	clc             			; Clear Carry (return code)
 
 ; Here if byte_133a bit 4 is set
-:	lda     byte_133a
+:	lda     byte_133a			;
 	and     #%11101111    			; Clear status bit
-	sta     byte_133a
+	sta     byte_133a			;
 	rts             			; Carry flag is return code
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                  ????????                                   *
+;*                              tab_timer_vals                                 *
 ;*                                                                             *
-;*                            ???????????????????                              *
+;*                      Lookup table for 3 timer LSB values                    *
+;*                                                                             *
+;*******************************************************************************
+tab_timer_vals:
+	.byte   8				; 0->8 jiffies
+	.byte   60				; 1->1 second
+	.byte   180     			; 2->3 seconds
+
+;*******************************************************************************
+;*                                                                             *
+;*                             init_pokey_and_status                           *
+;*                                                                             *
+;*                    Initialize POKEY and status variables                    *
 ;*                                                                             *
 ;*******************************************************************************
 
-LB47A:						; B47A
-	.byte   $08     			; 0000 1000
-	.byte   $3C     			; 0011 1100
-	.byte   $B4     			; 1011 1000
-
-;*******************************************************************************
-;*                                                                             *
-;*                                  sub_b47d                                   *
-;*                                                                             *
-;*                            Called during cart_init                      *
-;*                                                                             *
-;*******************************************************************************
-
-sub_b47d:
+; DESCRIPTION
+; Initialize POKEY and clear status bytes and others
+init_pokey_and_status:				; B47D
 	sei             			; Inhibit interrupts
 	jsr     init_pokey                      ; Initialize POKEY
 
-;-------------------------------------------------------------------------------
-; Initialize/clear status bytes and others
-;-------------------------------------------------------------------------------
 	ldy     #$07    			; Clear 8 bytes
-	lda     #$00    			;
-:	sta     byte_133c,Y                     ; 
+	lda     #%00000000    			;
+@LOOP:	sta     byte_133c,Y                     ; 
 	dey             			;
-	bpl     :-                              ; Next Y
+	bpl     @LOOP                           ; Next Y
 
-	sta     TSTDAT                          ; Clear TSTDAT
-	sta     byte_1346                       ; Clear byte_1346
+	sta     TSTDAT                          ; let TSTDAT = 0
+	sta     byte_1346                       ; let byte_1346 = 0
 
 ;-------------------------------------------------------------------------------
 ; Disable serial input-data-ready, output-data-req'd, out-transmission-finished
@@ -7066,18 +7182,18 @@ sub_b47d:
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                tab_vserin                                   *
-;*                                tab_vprced                                   *
+;*                               tab_ser_vects                                 *
+;*                               tab_per_vects                                 *
 ;*                                                                             *
-;*                     Table of serial interrupt vectors                       *
+;*               Table of serial and peripheral interrupt vectors              *
 ;*                                                                             *
 ;*******************************************************************************
-tab_vserin:					; B49B
+tab_ser_vects:					; B49B
 	.addr	sub_vserin			; POKEY serial I/O bus receive data ready
-	.addr	sub_vseror			; POKEY serial I/O transmit ready
-	.addr	sub_vseroc			; POKEY serial I/O transmit complete
+	.addr	sub_vserout			; POKEY serial I/O transmit ready
+	.addr	sub_vserout			; POKEY serial I/O transmit complete
 
-tab_vprced:					; B4A1
+tab_per_vects:					; B4A1
 	.addr	sub_vprced			; Serial (peripheral) proceed line
 	.addr	sub_vinter			; Serial (peripheral) interrupt
 
@@ -7089,51 +7205,77 @@ tab_vprced:					; B4A1
 ;*                                                                             *
 ;*******************************************************************************
 
+; DESCRIPTION
+;
 init_pokey:					; B4A5
 
-;**(n) Turn off bits 3-7 in SKCTL (and its shadow SSKCTL) **********************
-	lda     #$07    			; Disable bits 3-7 on serial port control
+;-------------------------------------------------------------------------------
+; Keep "enable keyboard debounce, scanning circuits"  & "pot counter completes 
+; read within 2 scan lines instead of one frame time" options as-is.
+;-------------------------------------------------------------------------------
+	lda     #%00000111			; 
 	and     SSKCTL  			; 
-	ora     #$70    			; 
+
+;-------------------------------------------------------------------------------
+; Enable 3 serial port mode control.
+;-------------------------------------------------------------------------------
+	ora     #%01110000			; 
 	sta     SSKCTL  			; 
 	sta     SKCTL                           ;
 	sta     SKREST  			; 
 
-	ldi	AUDCTL, $78			; Configure POKEY audio channels
+;-------------------------------------------------------------------------------
+; De Re Atari pp 7-9
+; bit 6: 1->clock channel 1 with 1.79 MHz
+; bit 5: 1->clock channel 3 with 1.79 MHz
+; bit 4: 1->join channel 2 to channel 1 (16-bit resolution)
+; bit 3: 1->join channel 4 to channel 3 (16-bit resolution)
+; bit 0: 0->use main clock base of 15KHz
+;-------------------------------------------------------------------------------
+	ldi	AUDCTL, %01111000		; Configure POKEY audio channels
 
-;**(n) Initialize audio tones **************************************************
-	ldx     #$07    			; 
-	lda     #$A0    			; Set AUDF[1-4] and AUDC[1-4]
-:	sta     AUDF1,x 			; for every 160 input pulses 
-	dex             			; emit 1 output pulse
-	bpl     :-      			; End loop after 8 iterations
+;-------------------------------------------------------------------------------
+; Configure tones. For every 160 input pulses, emit 1 output pulse. (15KHz/160)
+;-------------------------------------------------------------------------------
+	ldx     #$07    			; For X = 7 to 0 Step -1
+	lda     #160				; 160 input pulses per emit
+:	sta     AUDF1,X 			; Set AUDF[1-4] and AUDC[1-4]
+	dex             			; 
+	bpl     :-      			; Next X
 
-	lda     #$0B    			; Set AUDF2 and AUDF4
-	sta     AUDF2   			; For every 11 input pulses
-	sta     AUDF4   			; emit 1 output pulse
+;-------------------------------------------------------------------------------
+; Except for tones AUDF[2,4]. For every 11 input pulses, emit 1 output pulse.
+;-------------------------------------------------------------------------------
+	lda     #11				; 11 input pulses per emit
+	sta     AUDF2   			; 
+	sta     AUDF4   			; 
 
-;** (n) Install 3 new Serial Data-Ready Input vector addresses *****************
-	ldx     #$05    			; 
+;-------------------------------------------------------------------------------
+; Install 3 new Serial Data-Ready Input vector addresses
+;-------------------------------------------------------------------------------
+	ldx     #$05    			; For X = 5 to 0 Step -1
 :	lda     VSERIN,X 			; Save current vector address
-	sta     byte_1330,X 			; to RAM
-	lda     tab_vserin,X 			; Load new vector address
-	sta     VSERIN,X 			; from cartridge ROM
+	sta     MY_VSERIN,X 			; ...to RAM
+	lda     tab_ser_vects,X 			; Load new vector address
+	sta     VSERIN,X 			; ...from cartridge ROM
 	dex             			; 
-	bpl     :-      			; End loop after 6 iterations
+	bpl     :-      			; Next X
 
-;** (n) Install 2 new Serial Proceed-Line vector addresses *********************
-	ldx     #$03    			; 
-
+;-------------------------------------------------------------------------------
+; Install 2 new Serial Proceed-Line vector addresses
+;-------------------------------------------------------------------------------
+	ldx     #$03    			; For X = 4 to 0 Step -1
 :	lda     VPRCED,X 			; Save current vector address
-	sta     byte_1336,X 			; to RAM
-
-	lda     tab_vprced,X 			; Load new vector address
-	sta     VPRCED,X 			; from cartridge ROM
+	sta     byte_1336,X 			; ...to RAM
+	lda     tab_per_vects,X 			; Load new vector address
+	sta     VPRCED,X 			; ...from cartridge ROM
 	dex             			; 
-	bpl     :-      			; End loop after 4 iterations
+	bpl     :-      			; Next X
 
-;** (n) Enable Peripheral A interrupt ******************************************
-	ori	PACTL, $01
+;-------------------------------------------------------------------------------
+; Enable Peripheral A interrupt
+;-------------------------------------------------------------------------------
+	ori	PACTL, $01			;
 	rts             			; 
 
 ;*******************************************************************************
@@ -7145,24 +7287,25 @@ init_pokey:					; B4A5
 ;*******************************************************************************
 
 ; DESCRIPTION
-
+; 
 reg_ser_vects:					; B4f7
-	sei             			; Inhibit IRQs
+
 ;-------------------------------------------------------------------------------
 ; Register new vectors for serial receive/transmit ready/transmit complete
 ;-------------------------------------------------------------------------------
-	ldy     #$05    			; Loop for (3) 16-bit addresses
-:	lda     byte_1330,Y 			; Install new vectors for ..
-	sta     VSERIN,Y 			; VSERIN, VSEROR, VSEROC IRQs
+	sei             			; Inhibit IRQs
+	ldy     #$05    			; For Y = 5 to 0 Step -1
+:	lda     MY_VSERIN,Y 			; Install new vectors for
+	sta     VSERIN,Y 			; ...VSERIN, VSEROR, VSEROC IRQs
 	dey             			; 
 	bpl     :-      			; Next Y
 
 ;-------------------------------------------------------------------------------
 ; Register new vectors for serial peripherals (proceeed line and interrupt)
 ;-------------------------------------------------------------------------------
-	ldy     #$03    			; Loop for (2) 16-bit addresses
-:	lda     byte_1336,Y 			; Install new vectors for ...
-	sta     VPRCED,Y 			; VPRCED, VINTER
+	ldy     #$03    			; For Y = 3 to 0 Step -1
+:	lda     byte_1336,Y 			; Install new vectors for
+	sta     VPRCED,Y 			; ...VPRCED, VINTER
 	dey             			; 
 	bpl     :-				; Next Y
 
@@ -7170,14 +7313,14 @@ reg_ser_vects:					; B4f7
 ; Configure Port A controller (disable Peripheral A IRQ)
 ;-------------------------------------------------------------------------------
 	lda     PACTL				; Get current value
-	and     #$FE    			; Disable Peripheral A IRQ
+	and     #%11111110			; Disable Peripheral A IRQ (bit 0)
 	sta     PACTL				; Save new value
 
 ;-------------------------------------------------------------------------------
 ; Register IRQ changes
 ;-------------------------------------------------------------------------------
-	lda     #$C7    			; Disable VSERIN, VSEROR...
-	and     POKMSK				; ...VSEROC IRQs
+	lda     #%11000111			; Disable VSERIN, VSEROR...
+	and     POKMSK				; ...VSEROC IRQs TODO: Recheck flags
 	jsr     sub_irqen			; Update the IRQ system
 
 	cli             			; Enable IRQs
@@ -7185,38 +7328,43 @@ reg_ser_vects:					; B4f7
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 sub_b51f                                    *
+;*                                 set_timer                                    *
 ;*                                                                             *
 ;*                        Configure System Timer 1 IRQ	                       *
 ;*                                                                             *
 ;*******************************************************************************
 
-sub_b51f:
-	lda     #<sub_b534			; Point to code that runs on system timer IRQ
-	sta     CDTMA1				;
-	lda     #>sub_b534			;
-	sta     CDTMA1+1			;
+; DESCRIPTION
+; Parameters:
+; Y->Timer value LSB
+; X->Timer value MSB
+set_timer:					; B51F
+	lda     #<clear_timer_event_flg		; Point to code that runs on system timer IRQ
+	sta     CDTMA1				; System Timer 1 vector LSB
+
+	lda     #>clear_timer_event_flg		;
+	sta     CDTMA1+1			; System Timer 1 vector MSB
 
 	sei             			; Inhibit IRQs
-	lda     #$01    			; Set TIMER_EVENT flag (timer event clears it)
+	lda     #$01    			; Set timer flag (0->Timer event occurred)
 	sta     TIMER_EVENT			;
-	jsr	SETVBV				;
+	jsr	SETVBV				; Register timer with OS
 	cli             			; Enable IRQs
 
 	rts					;
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 sub_b534                                    *
+;*                           clear_timer_event_flg                             *
 ;*                                                                             *
 ;*                          System Timer 1 IRQ code                            *
 ;*                                                                             *
 ;*******************************************************************************
 
-sub_b534:
+clear_timer_event_flg:
 	lda     #$00    			; Clear TIMER_EVENT flag
-	sta     TIMER_EVENT			
-	rts             			 
+	sta     TIMER_EVENT			;
+	rts             			;
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7225,8 +7373,7 @@ sub_b534:
 ;*                          ???????????????????????                            *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b53a:  
-wait_outbuf_to_empty:
+wait_outbuf_to_empty:				; B53A
 	sei             			; Inhibit IRQs
 	jsr     enable_serout_irqs		; Enable Serial out IRQs
 	cli             			; Enable IRQs
@@ -7268,20 +7415,21 @@ sub_irqen:
 
 ;*******************************************************************************
 ;*                                                                             *
-;*                                 set_sys_tm1                                *
+;*                               wait_3_jiffies                                *
 ;*                                                                             *
-;*                       Set system timer 1 IRQ and BV                         *
+;*              Set system timer to 3 jiffies and wait for event               *
 ;*                                                                             *
 ;*******************************************************************************
 
 ; DESCRIPTION
-;
-set_sys_tm1:					; B54F
-	ldx     #>$0003				; Arg for SETVBV??
-	ldy     #<$0003   			; Arg for SETVBV??
-	jsr     sub_b51f			; Set System Timer 1 IRQ and run SETVBV
+; 
+; A->which system timer
+wait_3_jiffies:
+	ldx     #$00				; Timer value high byte
+	ldy     #$03				; Timer value low byte (3 jiffies)
+	jsr     set_timer			; Set System Timer 1 IRQ and run SETVBV
 
-:	lda     TIMER_EVENT			;
+:	lda     TIMER_EVENT			; 0->Timer expired
 	bne     :-				; Wait until System Timer 1 IRQ runs
 	rts             			; 
 
@@ -7306,21 +7454,26 @@ adv_buff_32_idx:
 ;*                   ????????????????????????????????????????                  *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b561:
-t_handler_open:
-	tsx             			; B561 BA                       .
-	stx     byte_1344
-	lda     ICAX1Z
-	sta     byte_133a
+t_handler_open:					; B561
+
+	tsx             			; 
+	stx     byte_1344			;
+
+	lda     ICAX1Z				; Specify type of file access needed
+	sta     byte_133a			; Access needed?
+
 	lda     #$00    			; B56A A9 00                    ..
-	sta     TSTDAT
-	jsr     sub_b47d
-	jsr     set_sys_tm1
+	sta     TSTDAT				;
+
+	jsr     init_pokey_and_status		;
+	jsr     wait_3_jiffies			;
+
 	lda     #$59    			; 'Y' (echo ?)
 	sta     CHARACTER                       ; byte_1347
-	ldx     #$01    			; B579 A2 01                    ..
-	jsr     sub_b422
-	jmp     LB5A5   			; B57E 4C A5 B5                 L..
+
+	ldx     #$01    			; 1->Wait 1 sec after serout is ready again
+	jsr     wait_for_serout			;
+	jmp     :+++				; Jump to nearby RTS
 
 
 ;*******************************************************************************
@@ -7330,25 +7483,33 @@ t_handler_open:
 ;*                   ????????????????????????????????????????                  *
 ;*                                                                             *
 ;*******************************************************************************
-sub_b581:
-t_handler_close:
-	tsx             			; B581 BA                       .
-	stx     byte_1344
-	lda     byte_133a
-	beq     LB5A5   			; B588 F0 1B                    ..
-	jsr     wait_outbuf_to_empty
-	lda     byte_B2
-	bne     :+				; B58F D0 04                    ..
-	lda     #$51    			; 'Q'
-	bne     :++				; B593 D0 02                    ..
-:	lda     #$5A    			; 'Z'
-:	sta     CHARACTER                       ; byte_1347
-	jsr     sub_b420
-	jsr     reg_ser_vects
+
+t_handler_close:				; B581
+
+	tsx             			;
+	stx     byte_1344			;
+
+	lda     byte_133a			; RTS if status is $00
+	beq     :+++				; 0? not open maybe? TODO --> RTS
+
+	jsr     wait_outbuf_to_empty		;
+
+	lda     byte_B2				;
+	bne     :+				; B2 <> 0? --> 'Z'
+
+	lda     #'Q'				; $51 'Q' 
+	bne     :++				; --> Store at CHARACTER
+
+:	lda     #'Z'    			; 'Z' 
+:	sta     CHARACTER                       ; 
+	jsr     wait_for_serout_8		;
+	jsr     reg_ser_vects			;
+
 	lda     #$00    			; B5A0 A9 00                    ..
-	sta     byte_133a
-LB5A5:  ldy     #$01    			; Return code
-	rts             			; B5A7 60                       `
+	sta     byte_133a			; No longer open
+
+:	ldy     #$01    			; Return code
+	rts             			; 
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7359,8 +7520,8 @@ LB5A5:  ldy     #$01    			; Return code
 ;*******************************************************************************
 
 t_handler:
-	.addr	sub_b561-1			; TODO OPEN?
-	.addr	sub_b581-1			; TODO CLOSE?
+	.addr	t_handler_open-1		; TODO OPEN?
+	.addr	t_handler_close-1		; TODO CLOSE?
 	.addr	t_handler_get-1			; TODO Get character?
 	.addr	t_handler_put-1			; TODO Put character?
 
@@ -7481,7 +7642,7 @@ LB652:
 RETURN: jmp     pull_and_rti   			; Return RTI
 CHKBUF:	lda     OUTBFPT				; Similar to CHKBUF routine found MPP source A146
 	beq     RETURN   			; 
-	jsr     sub_b3e7			; TODO
+	jsr     pop_outbuf			; 
 	eor     #$FF    			; 
 	sta     OUTBUF  			; 
 	lda     #$0A    			; 
@@ -7538,7 +7699,7 @@ sub_b6b8:
 	sta     byte_133a                       ; Let byte_133a = $8D
 
 	ldy     #$00    			; 
-	sty     BUF32_IDX   			; Point to start of 32-byte buffer
+	sty     BUF32_PUSH_IDX   			; Point to start of 32-byte buffer
 	sty     byte_133d                       ; Clear status byte
 	iny             			; return code?  = 1
 	sty     SEROUT_IRQ_FLG     			; Let $CB       = $01
@@ -7558,16 +7719,17 @@ sub_b6c9:
 ;** (n) Restore vector addresses for VSERIN, VSEROR, VSEROC ********************
 	ldy     #$05    			; 
 	sei             			; Prevent IRQs
-:	lda     byte_1330,Y 			; Values saved earlier in open_modem
+:	lda     MY_VSERIN,Y 			; Values saved earlier in open_modem
 	sta     VSERIN,Y 			; are restored to the serial vectors
 	dey             			; 
 	bpl     :-                              ; Next Y
 
 	cli             			; Enable IRQs
 	sty     byte_1346
-	iny             			; B6DD C8                       .
+	iny             			; Y = 0
 	sty     DAUX1   			; B6DE 8C 0A 03                 ...
 	sty     byte_133a			;
+
 	lda     #'W'    			; Let A = Write (verify) command
 	jmp     sub_sendsio                     ; Send SIO command frame
 
@@ -7582,16 +7744,20 @@ sub_b6c9:
 ; DESCRIPTION
 
 sub_write:					; B6E9
-	sta     CHARACTER                       ; 
-	ldx     #$01    			; 
-	stx     $21     			; TODO I can't find address $21 being used elsewhere.
 
+	sta     CHARACTER                       ; 
+	ldx     #$01    			; Set Device Number to 1
+	stx     ICDNOZ     			; 
+
+;-------------------------------------------------------------------------------
+; Wait here if output buffer is currently full
+;-------------------------------------------------------------------------------
 :	lda     OUTBFPT                         ; 
 	cmp     #$1F    			; 
-	bcs     :-                              ; Waiting for something to appear?
+	bcs     :-                              ; Test for put-buffer full, wait if so ...
 
 	sei             			; Disable interrupts
-	jsr     put_outbuf			; store character into some sort of buffer
+	jsr     push_outbuf			; store character into some sort of buffer
 
 	lda     POKMSK                          ; Enable serial output data-required...
 	ora     #$18    			; ... and output transmission-finished interrupts
@@ -7622,16 +7788,18 @@ sub_b709:
 sub_read:					; B709
 
 ;**(n) Wait for something to appear in the input buffer ************************
-	cli             			; Enable IRQ
-	sei             			; Inhibit IRQ
+	cli             			; Tickle IRQ
+	sei             			; 
+
 	ldy     BUFLEN  			; 
 	cpy     INPBFPT                         ; Wait until IRQ writes to buffer
 	beq     sub_read			; Continue waiting
 
 ;**(n) Copy most-recent byte from buffer to "character" ************************
 	jsr     get_inpbuf			; Using Y as offset, get last char from buffer...
-	ldy     #$01    			; ...and store in "character".
-	rts             			; Return success
+
+	ldy     #$01    			; Return code
+	rts             			; 
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7662,14 +7830,14 @@ LB71C:  ldy     #$00    			; Prepare CIO open R: on channel #1
 	sta     IS_MPP				; Default IS_MPP to modem (0)
 	sta     INPBFPT                         ; Let INPBFPT   = 0
 	sta     BUFLEN  			; Let BUFLEN    = 0
-	sta     BUF32_IDX   			; Let byte_1342 = 0
-	sta     byte_1341   			; Let byte_1341 = 0
+	sta     BUF32_PUSH_IDX   		; Let byte_1342 = 0
+	sta     BUF32_POP_IDX   		; Let byte_1341 = 0
 	sta     DBYT+1 			        ; Set MSB of buffer size to 0
 
 ;** (n) Construct SIO command frame for possible 850 ***************************
-	lda     #<byte_1330			; 
+	lda     #<MY_VSERIN			; 
 	sta     DBUF				; 
-	lda     #>byte_1330			;
+	lda     #>MY_VSERIN			;
 	sta     DBUF+1				;
 
 	lda     byte_133a                       ; Construct SIO command frame
@@ -7693,28 +7861,28 @@ LB71C:  ldy     #$00    			; Prepare CIO open R: on channel #1
 	ldi	SKCTL, $73			; Set serial port mode control
 
 ;** (n) Set audio control ******************************************************
-	lda     $1338   			; B75C AD 38 13                 .8.
+	lda     byte_1338   			; B75C AD 38 13                 .8.
 	sta     AUDCTL				; Set audio control
 
 ;** (n) Copy 8 bytes from $1330-$1337 to AUDF1/C1-AUDF4/C4 *******************
-	ldy     #$07    			; B762 A0 07                    ..
-@LOOP1:	lda     byte_1330,y 			; B764 B9 30 13                 .0.
-	sta     AUDF1,y 			; B767 99 00 D2                 ...
+	ldy     #$07    			; For Y = 7 to 0 Step -1
+@LOOP1:	lda     MY_VSERIN,Y 			; B764 B9 30 13                 .0.
+	sta     AUDF1,Y 			; B767 99 00 D2                 ...
 	dey             			; B76A 88                       .
-	bpl     @LOOP1      			; B76B 10 F7                    ..
+	bpl     @LOOP1      			; Next Y
 
 ;** (n) Save/replace VSERIN VSEROR VSEROC interrupt vectors ******************
 	ldx     #$06    			; 
 @LOOP2:	lda     VSERIN-1,X 			; Save currect serial vector...
-	sta     byte_1330-1,X 			; ...addresses to RAM
+	sta     MY_VSERIN-1,X 			; ...addresses to RAM
 
-	lda     LB822-1,X			; Load new vector...
+	lda     tab_ser_vects2-1,X			; Load new vector...
 	sta     VSERIN-1,X 			; ...addresses to IRQ registers
 	dex             			; 
 	bne     @LOOP2     			; End loop
 
-	stx     SERIN_FLG		        ; Let SERIN_FLG = 0
-	stx     byte_CD 			; Let byte_CD = 0
+	stx     SERIN_FLG		        ; 0->No data received
+	stx     byte_CD 			; Let byte_CD = 0 TODO
 
 	lda     POKMSK                          ; 
 	ora     #$20    			; Enable serial data-ready interrupt
@@ -7725,10 +7893,12 @@ LB71C:  ldy     #$00    			; Prepare CIO open R: on channel #1
 
 	cli             			; Enable IRQs
 	ldy     #$01    			; 
+
 	lda     byte_133a                       ; 
 	sta     ICAX1Z				; Let ICAX1Z = byte_133a
 	cpy     #$00    			; B796 C0 00                    ..
-	rts             			; B798 60                       `
+
+	rts             			; Return with flags
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7763,10 +7933,10 @@ sub_register_R:					; B799
 	sta     byte_1346       		; Save "R" in RAM
 	sta     HATABS,x			; Save "R" in the new slot
 
-	lda     #<handler_R 			; LSB of start of handler vector table
+	lda     #<r_handler 			; LSB of start of handler vector table
 	sta     HATABS+1,x      		; Save LSB in the new slot
 
-	lda     #>handler_R 			; MSB of start of handler vector table
+	lda     #>r_handler 			; MSB of start of handler vector table
 	sta     HATABS+2,x      		; Save MSB in the new slot
 
 ;** (4) Prepare SIO to load STATUS results into DVSTAT *************************
@@ -7788,14 +7958,22 @@ sub_register_R:					; B799
 	cpy     #$00    			; Sign flag set->850
 	rts             			; Sign flag clear->850
 
-; ----------------------------------------------------------------------------
+;*******************************************************************************
+;*                                                                             *
+;*                               sub_vserout2                                   *
+;*                                                                             *
+;*                             ????????????????                                *
+;*                                                                             *
+;*******************************************************************************
 
-sub_b7da:
-	lda     OUTBFPT
-	bne     :+
-	lda     byte_1346
-	sta     SEROUT_IRQ_FLG     			; B7E2 85 CB                    ..
-:	jmp	sub_b3c6
+sub_vserout2:						; B7DA
+	lda     OUTBFPT					; Is output buffer empty? 
+	bne     :+					; No? -->
+
+; Output buffer empty
+	lda     byte_1346				; A = 0
+	sta     SEROUT_IRQ_FLG     			; 0->Enable Serial Output Interrupts
+:	jmp	sub_vserout				; Do rest in other sub
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7863,19 +8041,20 @@ sub_sendsio:
 ;*                                                                             *
 ;*                                   LB81A                                     *
 ;*                                                                             *
-;*                             Handler Vector Table?????                       *
+;*                        Handler Vector Table?????                            *
 ;*                                                                             *
 ;*******************************************************************************
 LB81A:
-handler_R:
+r_handler:
 	.addr	sub_b6b8-1      		; OPEN vector???
 	.addr	sub_b6c9-1      		; CLOSE vector???
 	.addr	sub_read-1      		; Generic get character
 	.addr	sub_write-1      		; Generic put character
 
-LB822:	.addr	get_rs232_status		; GET STATUS vector???
-	.addr	sub_b7da			; SPECIAL vector???
-	.addr	sub_b7da			; 
+tab_ser_vects2:					; B822
+	.addr	sub_vserin			; Serial input ready subroutine
+	.addr	sub_vserout2			; 
+	.addr	sub_vserout2			; 
 
 ;*******************************************************************************
 ;*                                                                             *
@@ -7906,7 +8085,7 @@ play_beep:					; B828
 ;** Check if program is pirated ***********************************************
 	lda     #<(obf_code-1)			; Point to obfuscated code used for...
 	ldy     #>(obf_code-1)			; ...copy-protection check
-	ldx     #$0C    			; Initialize counter to 12
+	ldx     #12				; Initialize counter to 12
 	jmp     check_if_pirated		; Perform copy-protection check
 
 ; ----------------------------------------------------------------------------
@@ -10150,30 +10329,37 @@ get_hatabs_slot:				; BF86
 ;*                                                                             *
 ;*******************************************************************************
 
-cart_init:
-	jsr	sub_b47d                        ; Init POKEY and serial interrupts
+; DESCRIPTION
+; This subroutine is the initial entry point for the program. After this
+; routine returns, control is passed to cart_start.
+;
+cart_init:					; BF93
+	jsr	init_pokey_and_status		; Init POKEY and status variables
 
-;*******************************************************************************
-	lda	#$51				; 0101 0001
+;-------------------------------------------------------------------------------
+;
+;-------------------------------------------------------------------------------
+	lda	#%01010001			; 'Q'
 	sta	byte_1347                       ; Let byte_1347 = $51
 	sta	byte_133a                       ; Status byte TODO
 
-;*******************************************************************************
-	lda	SEROUT_IRQ_FLG				;
-	pha             			; Save current value in $CB
+;-------------------------------------------------------------------------------
+;
+;-------------------------------------------------------------------------------
+	lda	SEROUT_IRQ_FLG			; Stash current ZP value
+	pha             			; 
 
 ;-------------------------------------------------------------------------------
 ; Enable Serial Out IRQs
 ;-------------------------------------------------------------------------------
 	lda     #$00    			;
-	sta     SEROUT_IRQ_FLG     		; Let $CB = $00
-	jsr     sub_b420			;
+	sta     SEROUT_IRQ_FLG     		; 0->Enable Serial Out IRQs
+	jsr     wait_for_serout_8		;
 
 	pla             			;
-	sta     SEROUT_IRQ_FLG     			; Restore original value of $CB
+	sta     SEROUT_IRQ_FLG     		; Restore original value of $CB
 
-;*******************************************************************************
-	lda     #$51    			; $51 BFAB A9 51                    .Q
+	lda     #%01010001    			; $51 BFAB A9 51                    .Q
 	sta     byte_133a			; Status byte TODO
 
 	lda     WARMST     			; Is this cold-start or warm-start?
@@ -10182,60 +10368,67 @@ cart_init:
 ;-------------------------------------------------------------------------------
 ; Warm-start code
 ;-------------------------------------------------------------------------------
-	ldx     byte_B2
-	cpx     #$02    			; BFB6 E0 02                    ..
-	bcs     :+				; 
-	sec             			; Set Carry
-	bne     :+++				; 
+	ldx     byte_B2				;
+	cpx     #$02    			; 
+	bcs     :+				; B2 >= 2? Yes? Set timer -->
 
-:	ldx     #$02    			; BFBD A2 02                    ..
-	jsr     sub_b43f
+	sec             			; 
+	bne     :+++				; B2 < 2? --> RTS with Carry set
+
+:	ldx     #$02    			; 2->Set timer to IRQ every 3 seconds
+	jsr     wait_for_timer			; A = $FF? TODO
 
 ;-------------------------------------------------------------------------------
 ; Cold or Warm Start
 ;-------------------------------------------------------------------------------
-:	lda     #$FF    			; BFC2 A9 FF                    ..
+:	lda     #%11111111			;
 	sta     byte_133a			; Status byte TODO
 
-	lda     #$00    			; BFC7 A9 00                    ..
-	sta     SEROUT_IRQ_FLG     			; BFC9 85 CB                    ..
+	lda     #$00    			; 
+	sta     SEROUT_IRQ_FLG     		; 0->Enable Serial Out IRQs
 
-	ldx     #$02    			; BFCB A2 02                    ..
-	jsr     sub_b422
+	ldx     #$02    			; 2->Wait 3 secs after serout is ready again
+	jsr     wait_for_serout			; Register timer IRQ
 
 	lda     #$51    			; BFD0 A9 51                    .Q
 	sta     byte_133a			; Status byte TODO
-	jsr     sub_b420
+	jsr     wait_for_serout_8			;
 
 ;-------------------------------------------------------------------------------
 ; 
 ;-------------------------------------------------------------------------------
-:	jsr     reg_ser_vects
-	bcs	:+
-	lda     #$00    			; BFDD A9 00                    ..
-	sta     byte_133a
-	tax             			; BFE2 AA                       .
-	jsr     get_hatabs_slot
-	bne	:+
-	lda     #'T'
-	sta     HATABS,x
-	lda     #<t_handler
-	sta     HATABS+1,x
-	lda     #>t_handler
-	sta     HATABS+2,x
-:	rts
+:	jsr     reg_ser_vects			;
+	bcs	:+				;
+
+	lda     #%00000000			;
+	sta     byte_133a			; Status byte TODO
+
+	tax             			; X = 0
+	jsr     get_hatabs_slot			;
+	bne	:+				;
+
+	lda     #'T'				;
+	sta     HATABS,X			;
+
+	lda     #<t_handler			; Modem handler LSB
+	sta     HATABS+1,X			;
+
+	lda     #>t_handler			; Modem handler MSB
+	sta     HATABS+2,X			;
+:	rts					; Return with Carry set or clear
 
 	.byte	$00,$00				; Unused bytes
 
 	.org	$BFFA
 ;*******************************************************************************
 ;*                                                                             *
-;*                                   LBFFA                                     *
+;*                                cart_header                                  *
 ;*                                                                             *
 ;*                              Cartridge Header                               *
 ;*                                                                             *
 ;*******************************************************************************
-LBFFA:	.addr	cart_start                      ; Cart start address
-	.byte   $00                             ; Used by OS to determine if this is ROM
-	.byte	$04                             ; Option byte: run Cart init, then run Cart start
+cart_header:
+	.addr	cart_start                      ; Cart start address
+	.byte   $00                             ; Used by OS to confirm address space is ROM
+	.byte	$04                             ; Option byte: run cart_init, then run cart_start
 	.addr	cart_init                       ; Cart init address - entry point
